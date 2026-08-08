@@ -2,111 +2,251 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 
-# --- Page configuration (sets browser tab title/icon and layout) ---
+
+# ---------------------------------------------------------
+# PAGE CONFIGURATION
+# ---------------------------------------------------------
+
 st.set_page_config(
-    page_title="My Data Dashboard",
-    page_icon="📊",
+    page_title="Employee Analytics Dashboard",
+    page_icon="👥",
     layout="wide"
 )
 
-# --- Function: load and clean the uploaded CSV ---
-def load_and_clean(file):
+
+# ---------------------------------------------------------
+# DATABASE CONNECTION
+# ---------------------------------------------------------
+
+DB_NAME = "employees.db"
+
+
+def load_employee_data():
+    conn = sqlite3.connect(DB_NAME)
+
     try:
-        df = pd.read_csv(file)
+        df = pd.read_sql(
+            "SELECT * FROM employees",
+            conn
+        )
     except Exception as e:
-        st.error(f"❌ Couldn't read that file. Make sure it's a valid CSV. ({e})")
-        return None
+        st.error(f"Could not load employee data: {e}")
+        df = pd.DataFrame()
 
-    if df.empty:
-        st.warning("⚠️ That CSV file has no rows in it. Try a different file.")
-        return None
-
-    if "salary" in df.columns:
-        df["salary"] = df["salary"].fillna(df["salary"].mean())
-    if "hire_date" in df.columns:
-        df["hire_date"] = pd.to_datetime(df["hire_date"], errors="coerce")
-    return df
-
-# --- Function: save the cleaned data into a SQLite database file ---
-def save_to_db(df):
-    conn = sqlite3.connect("dashboard.db")
-    df.to_sql("data", conn, if_exists="replace", index=False)
     conn.close()
 
-# --- Function: load the most recently saved data from the database ---
-def load_from_db():
-    conn = sqlite3.connect("dashboard.db")
-    try:
-        df = pd.read_sql("SELECT * FROM data", conn)
-    except Exception:
-        df = None
-    conn.close()
     return df
 
-# --- App title ---
-st.title("📊 My First Data Dashboard")
-st.write("Upload a CSV file to see a summary and a chart.")
+
+# ---------------------------------------------------------
+# LOAD DATA
+# ---------------------------------------------------------
+
+df = load_employee_data()
+
+
+# ---------------------------------------------------------
+# TITLE
+# ---------------------------------------------------------
+
+st.title("👥 Employee Analytics Dashboard")
+
+st.write(
+    "Explore employee data, salaries, departments, and workforce statistics."
+)
 
 st.divider()
 
-# --- File upload widget ---
-uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
 
-if uploaded_file is not None:
-    df = load_and_clean(uploaded_file)
-    if df is not None:
-        save_to_db(df)
-        st.success("✅ Data saved! It will still be here next time you open the app.")
-else:
-    df = load_from_db()
-    if df is not None:
-        st.info("📂 Showing previously saved data. Upload a new file above to replace it.")
+# ---------------------------------------------------------
+# CHECK DATABASE
+# ---------------------------------------------------------
 
-if df is not None:
-    # --- Sidebar filters (interactivity) ---
-    st.sidebar.header("🔧 Filters")
+if df.empty:
 
-    if "department" in df.columns:
-        departments = ["All"] + sorted(df["department"].unique().tolist())
-        selected_dept = st.sidebar.selectbox("Filter by department", departments)
-
-        if selected_dept != "All":
-            df = df[df["department"] == selected_dept]
-
-    # --- Data preview ---
-    st.subheader("🔍 Preview of your data")
-    st.dataframe(df, width="stretch")
-
-    # --- Download button for the (filtered, cleaned) data ---
-    csv_data = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇️ Download this data as CSV",
-        data=csv_data,
-        file_name="filtered_data.csv",
-        mime="text/csv"
+    st.warning(
+        "No employee data was found in the database."
     )
 
-    st.divider()
+    st.stop()
 
-    # --- Summary stats (updates automatically based on the filter above) ---
-    st.subheader("📈 Summary Stats")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Employees", len(df))
 
-    if "salary" in df.columns:
-        col2.metric("Average Salary", f"${df['salary'].mean():,.0f}")
-        col3.metric("Highest Salary", f"${df['salary'].max():,.0f}")
+# ---------------------------------------------------------
+# SIDEBAR FILTERS
+# ---------------------------------------------------------
 
-    st.divider()
+st.sidebar.header("🔍 Filters")
 
-    # --- Chart: let the user pick which numeric column to visualize ---
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
-    if "department" in df.columns and numeric_cols:
-        st.subheader("📊 Chart by Department")
-        chart_column = st.selectbox("Choose a column to chart", numeric_cols)
+# Department filter
 
-        chart_data = df.groupby("department")[chart_column].mean().sort_values(ascending=False)
-        st.bar_chart(chart_data)
+if "department" in df.columns:
+
+    departments = sorted(
+        df["department"].dropna().unique().tolist()
+    )
+
+    selected_department = st.sidebar.multiselect(
+        "Department",
+        departments,
+        default=departments
+    )
+
+    filtered_df = df[
+        df["department"].isin(selected_department)
+    ]
+
 else:
-    st.info("👆 Upload a CSV file above to get started.")
+
+    filtered_df = df.copy()
+
+
+# Search employee
+
+if "name" in filtered_df.columns:
+
+    search = st.sidebar.text_input(
+        "Search employee"
+    )
+
+    if search:
+
+        filtered_df = filtered_df[
+            filtered_df["name"]
+            .astype(str)
+            .str.contains(
+                search,
+                case=False,
+                na=False
+            )
+        ]
+
+
+# ---------------------------------------------------------
+# KEY METRICS
+# ---------------------------------------------------------
+
+st.subheader("📊 Workforce Overview")
+
+
+col1, col2, col3, col4 = st.columns(4)
+
+
+# Employee count
+
+col1.metric(
+    "Employees",
+    len(filtered_df)
+)
+
+
+# Average salary
+
+if "salary" in filtered_df.columns:
+
+    average_salary = filtered_df["salary"].mean()
+
+    col2.metric(
+        "Average Salary",
+        f"${average_salary:,.0f}"
+    )
+
+
+# Highest salary
+
+if "salary" in filtered_df.columns:
+
+    highest_salary = filtered_df["salary"].max()
+
+    col3.metric(
+        "Highest Salary",
+        f"${highest_salary:,.0f}"
+    )
+
+
+# Lowest salary
+
+if "salary" in filtered_df.columns:
+
+    lowest_salary = filtered_df["salary"].min()
+
+    col4.metric(
+        "Lowest Salary",
+        f"${lowest_salary:,.0f}"
+    )
+
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# SALARY BY DEPARTMENT
+# ---------------------------------------------------------
+
+if "department" in filtered_df.columns and "salary" in filtered_df.columns:
+
+    st.subheader("💰 Average Salary by Department")
+
+    salary_by_department = (
+        filtered_df
+        .groupby("department")["salary"]
+        .mean()
+        .sort_values(ascending=False)
+    )
+
+    st.bar_chart(
+        salary_by_department
+    )
+
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# EMPLOYEE COUNT BY DEPARTMENT
+# ---------------------------------------------------------
+
+if "department" in filtered_df.columns:
+
+    st.subheader("👥 Employees by Department")
+
+    employees_by_department = (
+        filtered_df["department"]
+        .value_counts()
+    )
+
+    st.bar_chart(
+        employees_by_department
+    )
+
+
+st.divider()
+
+
+# ---------------------------------------------------------
+# EMPLOYEE DATA
+# ---------------------------------------------------------
+
+st.subheader("📋 Employee Data")
+
+st.dataframe(
+    filtered_df,
+    use_container_width=True
+)
+
+
+# ---------------------------------------------------------
+# DOWNLOAD DATA
+# ---------------------------------------------------------
+
+csv_data = filtered_df.to_csv(
+    index=False
+).encode("utf-8")
+
+
+st.download_button(
+    label="⬇️ Download filtered employee data",
+    data=csv_data,
+    file_name="employee_data.csv",
+    mime="text/csv"
+)
